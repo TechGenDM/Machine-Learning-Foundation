@@ -121,7 +121,7 @@ def make_preprocessor(X_train, log_cols=()):
         numeric_log = Pipeline(
             [
                 ("impute", SimpleImputer(strategy="median")),
-                ("log", FunctionTransformer(clip_log1p)),
+                ("log", FunctionTransformer(clip_log1p, feature_names_out="one-to-one")),
                 ("scale", StandardScaler()),
             ]
         )
