@@ -63,8 +63,22 @@ def remove_corrupted_rows(X_train, y_train):
     return X_train.loc[~mask], y_train.loc[~mask]
 
 
-def make_preprocessor(X_train):
+def clip_log1p(X):
+    """Clip at 0 then log1p (stateless). Used for skewed area/size columns."""
+    return np.log1p(np.clip(X, 0, None))
+
+
+def make_preprocessor(X_train, log_cols=()):
+    """Leakage-free ColumnTransformer.
+
+    log_cols: numeric columns that get median-impute -> clip(0) -> log1p -> scale
+    instead of the plain median-impute -> scale. Empty (default) = Stage 2 behaviour.
+    """
     numeric, other_nominal = derive_column_groups(X_train)
+    missing = set(log_cols) - set(numeric)
+    if missing:
+        raise ValueError(f"log_cols not numeric columns of X_train: {sorted(missing)}")
+    numeric = [c for c in numeric if c not in set(log_cols)]
 
     ordinal = Pipeline(
         [
@@ -97,15 +111,22 @@ def make_preprocessor(X_train):
             ("scale", StandardScaler()),
         ]
     )
-    columns = ColumnTransformer(
-        [
-            ("ordinal", ordinal, ORDINAL_COLS),
-            ("nominal_none", nominal_none, NONE_FILL_NOMINAL_COLS),
-            ("nominal_mode", nominal_mode, other_nominal),
-            ("numeric", numeric_pipe, numeric),
-        ],
-        remainder="drop",
-    )
+    transformers = [
+        ("ordinal", ordinal, ORDINAL_COLS),
+        ("nominal_none", nominal_none, NONE_FILL_NOMINAL_COLS),
+        ("nominal_mode", nominal_mode, other_nominal),
+        ("numeric", numeric_pipe, numeric),
+    ]
+    if log_cols:
+        numeric_log = Pipeline(
+            [
+                ("impute", SimpleImputer(strategy="median")),
+                ("log", FunctionTransformer(clip_log1p)),
+                ("scale", StandardScaler()),
+            ]
+        )
+        transformers.append(("numeric_log", numeric_log, list(log_cols)))
+    columns = ColumnTransformer(transformers, remainder="drop")
     return Pipeline(
         [
             ("cast", FunctionTransformer(cast_mssubclass_to_str)),
